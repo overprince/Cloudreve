@@ -8,13 +8,61 @@ import (
 	"github.com/HFO4/cloudreve/pkg/cache"
 	"github.com/HFO4/cloudreve/pkg/conf"
 	"github.com/HFO4/cloudreve/pkg/filesystem/fsctx"
+	"github.com/HFO4/cloudreve/pkg/filesystem/response"
 	"github.com/HFO4/cloudreve/pkg/serializer"
 	"github.com/HFO4/cloudreve/pkg/util"
 	"github.com/jinzhu/gorm"
 	"github.com/stretchr/testify/assert"
+	testMock "github.com/stretchr/testify/mock"
 	"os"
 	"testing"
 )
+
+func TestFileSystem_ListPhysical(t *testing.T) {
+	asserts := assert.New(t)
+	fs := &FileSystem{
+		User: &model.User{
+			Model: gorm.Model{
+				ID: 1,
+			},
+		},
+		Policy: &model.Policy{Type: "mock"},
+	}
+	ctx := context.Background()
+
+	// 未知存储策略
+	{
+		fs.Policy.Type = "unknown"
+		res, err := fs.ListPhysical(ctx, "/")
+		asserts.Equal(ErrUnknownPolicyType, err)
+		asserts.Empty(res)
+		fs.Policy.Type = "mock"
+	}
+
+	// 无法列取目录
+	{
+		testHandler := new(FileHeaderMock)
+		testHandler.On("List", testMock.Anything, "/", testMock.Anything).Return([]response.Object{}, errors.New("error"))
+		fs.Handler = testHandler
+		res, err := fs.ListPhysical(ctx, "/")
+		asserts.EqualError(err, "error")
+		asserts.Empty(res)
+	}
+
+	// 成功
+	{
+		testHandler := new(FileHeaderMock)
+		testHandler.On("List", testMock.Anything, "/", testMock.Anything).Return(
+			[]response.Object{{IsDir: true, Name: "1"}, {IsDir: false, Name: "2"}},
+			nil,
+		)
+		fs.Handler = testHandler
+		res, err := fs.ListPhysical(ctx, "/")
+		asserts.NoError(err)
+		asserts.Len(res, 1)
+		asserts.Equal("1", res[0].Name)
+	}
+}
 
 func TestFileSystem_List(t *testing.T) {
 	asserts := assert.New(t)
@@ -659,11 +707,38 @@ func TestFileSystem_Rename(t *testing.T) {
 		asserts.Equal(ErrPathNotExist, err)
 	}
 
-	// 新名字不合法
+	// 新名字是目录，不合法
 	{
 		err := fs.Rename(ctx, []uint{10}, []uint{}, "ne/w")
 		asserts.Error(err)
 		asserts.Equal(ErrIllegalObjectName, err)
+	}
+
+	// 新名字是文件，不合法
+	{
+		err := fs.Rename(ctx, []uint{}, []uint{10}, "ne/w")
+		asserts.Error(err)
+		asserts.Equal(ErrIllegalObjectName, err)
+	}
+
+	// 新名字是文件，扩展名不合法
+	{
+		fs.User.Policy.OptionsSerialized.FileType = []string{"txt"}
+		err := fs.Rename(ctx, []uint{}, []uint{10}, "1.jpg")
+		asserts.Error(err)
+		asserts.Equal(ErrIllegalObjectName, err)
+	}
+
+	// 新名字是目录，不应该检测扩展名
+	{
+		fs.User.Policy.OptionsSerialized.FileType = []string{"txt"}
+		mock.ExpectQuery("SELECT(.+)folders(.+)").
+			WithArgs(10, 1).
+			WillReturnRows(sqlmock.NewRows([]string{"id", "name"}))
+		err := fs.Rename(ctx, []uint{10}, []uint{}, "new")
+		asserts.NoError(mock.ExpectationsWereMet())
+		asserts.Error(err)
+		asserts.Equal(ErrPathNotExist, err)
 	}
 }
 

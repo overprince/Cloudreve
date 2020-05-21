@@ -34,7 +34,7 @@ buildAssets () {
   fi
 
   cd $REPO
-  statik -src=assets/build/  -include=*.html,*.js,*.json,*.css,*.png,*.svg,*.ico -f
+  statik -src=assets/build/  -include=*.html,*.js,*.json,*.css,*.png,*.svg,*.ico,*.ttf -f
 }
 
 buildBinary () {
@@ -55,7 +55,12 @@ _build() {
     export CC=$gcc
     export CGO_ENABLED=1
 
-    out="release/cloudreve_${VERSION}_${os}_${arch}"
+    if [ -n "$VERSION" ]; then
+        out="release/cloudreve_${VERSION}_${os}_${arch}"
+    else
+        out="release/cloudreve_${COMMIT_SHA}_${os}_${arch}"
+    fi
+
     go build -a -o "${out}" -ldflags " -X 'github.com/HFO4/cloudreve/pkg/conf.BackendVersion=$VERSION' -X 'github.com/HFO4/cloudreve/pkg/conf.LastCommit=$COMMIT_SHA'"
 
     if [ "$os" = "windows" ]; then
